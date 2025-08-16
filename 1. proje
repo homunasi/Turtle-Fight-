@@ -1,249 +1,151 @@
-import pygame
-import sys
-import random
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Kaplumbağa Savaşları</title>
+<style>
+    body { margin:0; background:black; overflow:hidden; }
+    canvas { display:block; margin:0 auto; background:black; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="900" height="600"></canvas>
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
 
-pygame.init()
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+const PLATFORM_Y = HEIGHT - 100;
+const PLATFORM_HEIGHT = 20;
 
-# ------------------- Genel Ayarlar -------------------
-WIDTH, HEIGHT = 900, 600
-WIN = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Kaplumbağa Savaşları")
-FPS = 60
+let gameState = "menu"; // menu, select, play
+let selectedIndex = 1;
 
-# ------------------- Renkler -------------------
-BLACK = (0,0,0)
-WHITE = (255,255,255)
-YELLOW = (255,255,0)
-MURRIKO_COLOR = (128,0,128)
-SANJAI_COLOR = (255,215,0)
-PURRIO_COLOR = (0,0,255)
-SNAKE_COLOR = (0,200,0)
-TORNADO_COLOR = (200,200,0)
-LIGHTNING_COLOR = (255,255,255)
-SWORD_COLOR = (200,200,200)
-NUNCHAKU_COLOR = (0,0,200)
-SPEAR_COLOR = (255,215,0)
-PARTICLE_COLOR = (255,255,255)
+class Turtle {
+    constructor(x, color, name) {
+        this.x = x;
+        this.y = PLATFORM_Y - 50;
+        this.color = color;
+        this.name = name;
+        this.width = 50;
+        this.height = 50;
+        this.velX = 0;
+        this.velY = 0;
+        this.onGround = true;
+        this.health = 3;
+        this.direction = 1;
+        this.jCooldown = 0;
+        this.kCooldown = 0;
+    }
+    draw() {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+    }
+    move(keys) {
+        this.velX = 0;
+        if(keys['a']) { this.velX = -5; this.direction = -1; }
+        if(keys['d']) { this.velX = 5; this.direction = 1; }
+        if(keys['w'] && this.onGround) { this.velY = -12; this.onGround=false; }
+        if(keys['s']) { this.height = 25; } else { this.height = 50; }
 
-# ------------------- Platform -------------------
-PLATFORM_Y = HEIGHT - 100
-PLATFORM_HEIGHT = 20
+        this.x += this.velX;
+        this.velY += 0.5;
+        this.y += this.velY;
+        if(this.y + this.height >= PLATFORM_Y) { this.y = PLATFORM_Y - this.height; this.velY=0; this.onGround=true; }
+        if(this.x<0) this.x=0;
+        if(this.x+this.width>WIDTH) this.x=WIDTH-this.width;
+        if(this.jCooldown>0) this.jCooldown--;
+        if(this.kCooldown>0) this.kCooldown--;
+    }
+}
 
-# ------------------- Kaplumbağa Sınıfı -------------------
-class Turtle:
-    WIDTH, HEIGHT = 50, 50
-    def __init__(self, x, y, color, name):
-        self.x = x
-        self.y = y
-        self.color = color
-        self.name = name
-        self.vel_x = 0
-        self.vel_y = 0
-        self.on_ground = True
-        self.health = 3
-        self.direction = 1
-        self.j_cooldown = 0
-        self.k_cooldown = 0
-        self.height = self.HEIGHT
+class Effect {
+    constructor(x,y,type,direction,target) {
+        this.x=x; this.y=y; this.type=type; this.direction=direction; this.target=target; this.timer=60;
+    }
+    draw() {
+        ctx.fillStyle="white";
+        if(this.type=="sword") ctx.fillRect(this.x,this.y,40,10);
+        if(this.type=="snake") ctx.fillRect(this.x+20,this.y-20,20,60);
+        if(this.type=="tornado") { ctx.beginPath(); ctx.arc(this.x,this.y,40,0,2*Math.PI); ctx.fill(); }
+        if(this.type=="lightning") { ctx.strokeStyle="white"; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(this.x,0); ctx.lineTo(this.x,HEIGHT); ctx.stroke(); }
+        if(this.type=="spear") ctx.fillRect(this.x,this.y,50,10);
+        if(this.type=="nunchaku") ctx.fillRect(this.x,this.y,50,10);
+        this.timer--;
+        return this.timer<=0;
+    }
+}
 
-    def draw(self, win):
-        pygame.draw.rect(win, self.color, (self.x, self.y, self.WIDTH, self.height))
+let keys = {};
+let effects=[];
+let player;
+let enemies=[];
 
-    def move(self, keys):
-        self.vel_x = 0
-        if keys[pygame.K_a]:
-            self.vel_x = -5
-            self.direction = -1
-        if keys[pygame.K_d]:
-            self.vel_x = 5
-            self.direction = 1
-        if keys[pygame.K_w] and self.on_ground:
-            self.vel_y = -12
-            self.on_ground = False
-        if keys[pygame.K_s]:
-            self.height = 25
-        else:
-            self.height = self.HEIGHT
+function drawMenu() {
+    ctx.fillStyle="black"; ctx.fillRect(0,0,WIDTH,HEIGHT);
+    ctx.fillStyle="yellow"; ctx.fillRect(WIDTH/2-100, HEIGHT/2-50, 200,100);
+    ctx.fillStyle="black"; ctx.font="50px Arial";
+    ctx.fillText("PLAY", WIDTH/2-50, HEIGHT/2+15);
+}
 
-        self.x += self.vel_x
-        self.vel_y += 0.5
-        self.y += self.vel_y
+function drawSelect() {
+    ctx.fillStyle="black"; ctx.fillRect(0,0,WIDTH,HEIGHT);
+    const turtleColors=["blue","gold","purple"];
+    const turtleNames=["Purrio","Sanjai","Murriko"];
+    for(let i=0;i<3;i++){
+        ctx.fillStyle = (i==selectedIndex)? turtleColors[i]: "gray";
+        ctx.fillRect(100+i*250,200,50,50);
+        ctx.fillStyle="white";
+        ctx.font="20px Arial";
+        ctx.fillText(turtleNames[i],100+i*250,260);
+    }
+    ctx.fillStyle = turtleColors[selectedIndex];
+    ctx.fillRect(WIDTH/2-50,350,100,100);
+}
 
-        if self.y + self.height >= PLATFORM_Y:
-            self.y = PLATFORM_Y - self.height
-            self.vel_y = 0
-            self.on_ground = True
+function drawGame() {
+    ctx.fillStyle="black"; ctx.fillRect(0,0,WIDTH,HEIGHT);
+    ctx.fillStyle="gray"; ctx.fillRect(0,PLATFORM_Y,WIDTH,PLATFORM_HEIGHT);
+    player.draw();
+    for(let e of enemies) e.draw();
+    for(let ef of effects) { if(ef.draw()) effects.splice(effects.indexOf(ef),1); }
+}
 
-        self.x = max(0, min(WIDTH - self.WIDTH, self.x))
+document.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()]=true;
+if(gameState=="select"){
+    if(e.key=="ArrowLeft") selectedIndex=Math.max(0,selectedIndex-1);
+    if(e.key=="ArrowRight") selectedIndex=Math.min(2,selectedIndex+1);
+    if(e.key.toLowerCase()=="c") { startGame(); }
+}});
+document.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
 
-    def cooldowns(self):
-        if self.j_cooldown > 0:
-            self.j_cooldown -= 1
-        if self.k_cooldown > 0:
-            self.k_cooldown -= 1
+canvas.addEventListener('click', e=>{
+    if(gameState=="menu"){
+        let rect=canvas.getBoundingClientRect();
+        let mx=e.clientX-rect.left, my=e.clientY-rect.top;
+        if(mx>WIDTH/2-100 && mx<WIDTH/2+100 && my>HEIGHT/2-50 && my<HEIGHT/2+50) gameState="select";
+    }
+});
 
-    def j_attack(self, effects, targets):
-        if self.j_cooldown == 0:
-            if self.name == "Murriko":
-                effects.append(Effect(self.x + self.direction*50, self.y, "sword_swing", self.direction, targets))
-            elif self.name == "Sanjai":
-                effects.append(Effect(self.x + self.direction*50, self.y, "spear_stab", self.direction, targets))
-            elif self.name == "Purrio":
-                effects.append(Effect(self.x + self.direction*50, self.y, "nunchaku_hit", self.direction, targets))
-            self.j_cooldown = 30
+function startGame(){
+    const colors=["blue","gold","purple"];
+    const names=["Purrio","Sanjai","Murriko"];
+    player=new Turtle(WIDTH/2, colors[selectedIndex], names[selectedIndex]);
+    enemies=[];
+    for(let i=0;i<3;i++){ if(i!=selectedIndex) enemies.push(new Turtle(100+i*250,colors[i],names[i])); }
+    effects=[];
+    gameState="play";
+}
 
-    def k_attack(self, effects):
-        if self.k_cooldown == 0:
-            if self.name == "Murriko":
-                effects.append(Effect(self.x + self.direction*60, self.y, "snake", self.direction, []))
-            elif self.name == "Sanjai":
-                effects.append(Effect(self.x, self.y, "tornado", self.direction, []))
-            elif self.name == "Purrio":
-                effects.append(Effect(self.x, 0, "lightning", self.direction, []))
-            self.k_cooldown = 120
+function gameLoop(){
+    if(gameState=="menu") drawMenu();
+    else if(gameState=="select") drawSelect();
+    else if(gameState=="play") { player.move(keys); drawGame(); }
+    requestAnimationFrame(gameLoop);
+}
 
-# ------------------- Efekt Sınıfı -------------------
-class Effect:
-    def __init__(self, x, y, type, direction, targets):
-        self.x = x
-        self.y = y
-        self.type = type
-        self.timer = 60 if type in ["sword_swing","spear_stab","nunchaku_hit"] else 120
-        self.direction = direction
-        self.targets = targets
-
-    def draw(self, win):
-        if self.type == "sword_swing":
-            pygame.draw.rect(win, SWORD_COLOR, (self.x, self.y, 40, 10))
-        elif self.type == "snake":
-            pygame.draw.rect(win, SNAKE_COLOR, (self.x+20, self.y-20, 20, 60))
-        elif self.type == "tornado":
-            pygame.draw.circle(win, TORNADO_COLOR, (int(self.x), int(self.y)), 40)
-        elif self.type == "lightning":
-            pygame.draw.line(win, LIGHTNING_COLOR, (self.x, 0), (self.x, 600), 5)
-        elif self.type == "spear_stab":
-            pygame.draw.rect(win, SPEAR_COLOR, (self.x, self.y, 50, 10))
-        elif self.type == "nunchaku_hit":
-            pygame.draw.rect(win, NUNCHAKU_COLOR, (self.x, self.y, 50, 10))
-        # Partikül efekti
-        if self.type in ["tornado","lightning"]:
-            for _ in range(3):
-                px = self.x + random.randint(-20,20)
-                py = self.y + random.randint(-20,20)
-                pygame.draw.circle(win, PARTICLE_COLOR, (px, py), 3)
-        self.timer -= 1
-        return self.timer <= 0
-
-# ------------------- Ana Menü -------------------
-def main_menu():
-    while True:
-        WIN.fill(BLACK)
-        font = pygame.font.SysFont(None, 50)
-        text = font.render("PLAY", True, BLACK)
-        pygame.draw.rect(WIN, YELLOW, (WIDTH//2 - 100, HEIGHT//2 - 50, 200, 100))
-        WIN.blit(text, (WIDTH//2 - text.get_width()//2, HEIGHT//2 - text.get_height()//2))
-        pygame.display.update()
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                mx, my = pygame.mouse.get_pos()
-                if WIDTH//2 - 100 < mx < WIDTH//2 + 100 and HEIGHT//2 - 50 < my < HEIGHT//2 + 50:
-                    character_selection()
-
-# ------------------- Karakter Seçimi -------------------
-def character_selection():
-    turtles = [
-        Turtle(100, PLATFORM_Y - 50, PURRIO_COLOR, "Purrio"),
-        Turtle(350, PLATFORM_Y - 50, SANJAI_COLOR, "Sanjai"),
-        Turtle(600, PLATFORM_Y - 50, MURRIKO_COLOR, "Murriko")
-    ]
-    selected_index = 1
-    while True:
-        WIN.fill(BLACK)
-        font = pygame.font.SysFont(None, 30)
-        for i, t in enumerate(turtles):
-            color = t.color if i == selected_index else (100, 100, 100)
-            pygame.draw.rect(WIN, color, (100 + i*250, 200, 50, 50))
-            text = font.render(t.name, True, WHITE)
-            WIN.blit(text, (100 + i*250, 260))
-        pygame.draw.rect(WIN, turtles[selected_index].color, (WIDTH//2 - 50, 350, 100, 100))
-        pygame.display.update()
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LEFT:
-                    selected_index = max(0, selected_index-1)
-                if event.key == pygame.K_RIGHT:
-                    selected_index = min(2, selected_index+1)
-                if event.key == pygame.K_c:
-                    game(turtles[selected_index])
-
-# ------------------- Oyun Döngüsü -------------------
-def game(player_turtle):
-    other_turtles = [
-        Turtle(200, PLATFORM_Y - 50, PURRIO_COLOR, "Purrio"),
-        Turtle(500, PLATFORM_Y - 50, SANJAI_COLOR, "Sanjai"),
-        Turtle(650, PLATFORM_Y - 50, MURRIKO_COLOR, "Murriko")
-    ]
-    other_turtles = [t for t in other_turtles if t.name != player_turtle.name]
-    effects = []
-    clock = pygame.time.Clock()
-    winner_timer = 0
-    winner_name = ""
-
-    while True:
-        clock.tick(FPS)
-        WIN.fill(BLACK)
-        pygame.draw.rect(WIN, (100, 100, 100), (0, PLATFORM_Y, WIDTH, PLATFORM_HEIGHT))
-        keys = pygame.key.get_pressed()
-        player_turtle.move(keys)
-        player_turtle.cooldowns()
-        if keys[pygame.K_j]:
-            player_turtle.j_attack(effects, other_turtles)
-        if keys[pygame.K_k]:
-            player_turtle.k_attack(effects)
-
-        player_turtle.draw(WIN)
-
-        # Rakipler
-        for t in other_turtles:
-            t.draw(WIN)
-            t.cooldowns()
-
-        # Efektler
-        for e in effects[:]:
-            if e.draw(WIN):
-                effects.remove(e)
-            else:
-                for t in other_turtles:
-                    if pygame.Rect(t.x, t.y, t.WIDTH, t.height).colliderect(pygame.Rect(e.x, e.y, 50, 50)):
-                        t.health -= 1
-                        t.x += e.direction*20
-                        if t.health <= 0:
-                            other_turtles.remove(t)
-
-        # Maç Sonu
-        if len(other_turtles) == 0 and winner_timer == 0:
-            winner_name = player_turtle.name
-            winner_timer = 5*FPS
-        if winner_timer > 0:
-            font = pygame.font.SysFont(None, 60)
-            text = font.render(f"{winner_name} KAZANDI!", True, WHITE)
-            WIN.blit(text, (WIDTH//2 - text.get_width()//2, HEIGHT//2 - text.get_height()//2))
-            winner_timer -= 1
-            if winner_timer == 0:
-                main_menu()
-
-        pygame.display.update()
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-
-# ------------------- Oyunu Başlat -------------------
-main_menu()
+gameLoop();
+</script>
+</body>
+</html>
