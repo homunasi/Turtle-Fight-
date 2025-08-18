@@ -1,625 +1,212 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Kaplumbağa Savaşları</title>
+<meta charset="UTF-8">
+<title>Turtle Fight - Brawlhalla Tarzı</title>
 <style>
-  :root{
-    --w:900; --h:600;
-  }
-  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui,Arial}
-  #c{display:block;margin:0 auto;background:#000;outline:none}
-  .hint{position:fixed;left:50%;transform:translateX(-50%);bottom:8px;font-size:12px;color:#aaa}
+  body { margin:0; background:#111; font-family:sans-serif; overflow:hidden; }
+  #menu, #gameOver { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; justify-content:center; align-items:center; flex-direction:column; color:white; }
+  #menu { background:black; }
+  #playBtn { padding:20px 40px; background:yellow; color:black; font-size:24px; cursor:pointer; border:none; margin-bottom:20px; }
+  #characterSelect { display:flex; gap:50px; margin-top:20px; }
+  .charBox { width:100px; height:100px; cursor:pointer; display:flex; justify-content:center; align-items:center; font-weight:bold; border:2px solid white; transition:transform 0.2s; }
+  .charBox:hover { transform: scale(1.1); }
+  #gameCanvas { display:block; margin:0 auto; background: linear-gradient(to top, #00111a, #003366); }
 </style>
 </head>
 <body>
-<canvas id="c" width="900" height="600" tabindex="0" aria-label="Kaplumbağa Savaşları"></canvas>
-<div class="hint">WASD hareket • S eğil • J saldırı • K süper • Menüde C ile başla</div>
+
+<div id="menu">
+  <button id="playBtn">PLAY</button>
+  <div id="characterSelect">
+    <div class="charBox" id="purrioBox" style="background:blue;">Purrio</div>
+    <div class="charBox" id="sanjaiBox" style="background:gold;">Sanjai</div>
+    <div class="charBox" id="murrikoBox" style="background:purple;">Murriko</div>
+  </div>
+</div>
+
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+
+<div id="gameOver" style="display:none;">
+  Kazanan: <span id="winner"></span>
+</div>
 
 <script>
-(() => {
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  const PLATFORM_Y = H - 100, PLATFORM_H = 22;
-  const GRAV = 0.7, FRICTION = 0.85;
-  const keys = Object.create(null);
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 
-  // Oyun durumları
-  let state = "menu"; // menu, select, play, win
-  let selectedIndex = 2; // 0 Purrio, 1 Sanjai, 2 Murriko (sağdan sola)
-  let player = null;
-  let bots = [];
-  let effects = [];
-  let winnerName = "";
-  let winTimer = 0;
+let gameState = 'menu';
+let selectedChar = null;
+let characters = {};
+let keys = {};
+let effects = [];
+let winner = null;
 
-  // Karakterler
-  const CHAR_LIST = [
-    { name:"Purrio",  color:"#2a9df4", accent:"#7fb7ff" },
-    { name:"Sanjai",  color:"#ffd700", accent:"#ffe680" },
-    { name:"Murriko", color:"#8a2be2", accent:"#c79cff" },
-  ];
+// Karakter verileri
+const charData = {
+  Murriko: { color:'purple', x:100, y:300, width:50, height:50, health:3, jCount:0, jReady:true, kReady:true, superUsed:{} },
+  Sanjai: { color:'gold', x:300, y:300, width:50, height:50, health:3, jCount:0, jReady:true, kReady:true, superUsed:{} },
+  Purrio: { color:'blue', x:500, y:300, width:50, height:50, health:3, jCount:0, jReady:true, kReady:true, superUsed:{} }
+};
 
-  // Basit yardımcılar
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const rectsOverlap = (a, b) => (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y);
-  const rnd = (a,b)=> a + Math.random()*(b-a);
+// Karakter seçimi
+document.getElementById('murrikoBox').onclick = ()=>selectedChar='Murriko';
+document.getElementById('sanjaiBox').onclick = ()=>selectedChar='Sanjai';
+document.getElementById('purrioBox').onclick = ()=>selectedChar='Purrio';
 
-  // Nesneler
-  class Fighter {
-    constructor(x, name, color, accent, isBot=false){
-      this.x = x;
-      this.y = PLATFORM_Y - 50;
-      this.w = 50; this.h = 50;
-      this.vx = 0; this.vy = 0;
-      this.face = 1; // 1 sağ, -1 sol
-      this.onGround = true;
-      this.name = name;
-      this.color = color;
-      this.accent = accent;
-      this.hp = 3;
-      this.inv = 0;         // respawn sonrası kısa dokunulmazlık
-      this.jCD = 0;
-      this.kCD = 0;
-      this.isBot = isBot;
-      this.aiTimer = 0;
-    }
-    get rect(){ return {x:this.x, y:this.y, w:this.w, h:this.h}; }
+// Play tuşu
+document.getElementById('playBtn').onclick = ()=>{
+  if(!selectedChar) { alert('Bir karakter seç!'); return; }
+  startGame();
+};
 
-    draw(){
-      // gölge
-      ctx.fillStyle = "rgba(0,0,0,.35)";
-      ctx.beginPath();
-      ctx.ellipse(this.x + this.w/2, PLATFORM_Y+PLATFORM_H, this.w*0.45, 6, 0, 0, Math.PI*2);
-      ctx.fill();
+function startGame(){
+  gameState='playing';
+  document.getElementById('menu').style.display='none';
+  characters = JSON.parse(JSON.stringify(charData));
+  effects=[];
+  requestAnimationFrame(gameLoop);
+}
 
-      // gövde
-      ctx.fillStyle = this.color;
-      ctx.fillRect(this.x, this.y, this.w, this.h);
+// Tuş takibi
+window.addEventListener('keydown', e=>{ keys[e.key.toUpperCase()]=true; });
+window.addEventListener('keyup', e=>{ keys[e.key.toUpperCase()]=false; });
 
-      // kabuk çizgileri
-      ctx.strokeStyle = this.accent;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(this.x+4, this.y+4, this.w-8, this.h-8);
-      ctx.beginPath();
-      ctx.moveTo(this.x+8, this.y+this.h/2); ctx.lineTo(this.x+this.w-8, this.y+this.h/2);
-      ctx.moveTo(this.x+this.w/2, this.y+8); ctx.lineTo(this.x+this.w/2, this.y+this.h-8);
-      ctx.stroke();
-
-      // yüz (basit)
-      ctx.fillStyle = "#111";
-      const eyeY = this.y + 14;
-      const ex1 = this.x + (this.face===1 ? 28 : 12);
-      const ex2 = this.x + (this.face===1 ? 36 : 20);
-      ctx.fillRect(ex1, eyeY, 5, 6);
-      ctx.fillRect(ex2, eyeY, 5, 6);
-
-      // canlar
-      for(let i=0;i<this.hp;i++){
-        ctx.fillStyle = "#e33";
-        ctx.fillRect(this.x + i*12, this.y-12, 10, 8);
-      }
-      if(this.inv>0){
-        ctx.strokeStyle = "rgba(255,255,255,.7)";
-        ctx.strokeRect(this.x-2,this.y-2,this.w+4,this.h+4);
+// Saldırı ve süper güç
+function attack(char,key){
+  let c = characters[char];
+  if(!c) return;
+  if(key==='J' && c.jReady){
+    c.jCount++;
+    c.jReady=false;
+    setTimeout(()=>c.jReady=true,500);
+    for(let other in characters){
+      if(other!==char && !c.superUsed[other]){
+        characters[other].health--;
       }
     }
-
-    update(inputDir=0, wantJump=false, crouch=false){
-      // crouch
-      if(crouch){
-        this.h = 28;
-      } else {
-        // ayağa kalkarken platform içine girme
-        const dh = 50 - this.h;
-        this.y -= dh;
-        this.h = 50;
+  } else if(key==='K' && c.kReady && c.jCount>=3){
+    c.kReady=false;
+    c.jCount=0;
+    for(let other in characters){
+      if(other!==char && !c.superUsed[other]){
+        characters[other].health--;
+        c.superUsed[other]=true;
+        if(char==='Murriko') effects.push({type:'yilan', target:other, start:Date.now()});
+        if(char==='Sanjai') effects.push({type:'kasirga', target:other, start:Date.now()});
+        if(char==='Purrio') effects.push({type:'yildirim', target:other, start:Date.now()});
+        setTimeout(()=>{ c.superUsed[other]=false; },2000);
       }
-
-      // yatay hareket
-      const speed = 4.2;
-      this.vx += inputDir * 0.9;
-      this.vx = clamp(this.vx, -speed, speed);
-      if(inputDir === 0) this.vx *= FRICTION;
-
-      // zıplama
-      if(wantJump && this.onGround){
-        this.vy = -13.2;
-        this.onGround = false;
-      }
-
-      // yerçekimi
-      this.vy += GRAV;
-
-      // konum
-      this.x += this.vx;
-      this.y += this.vy;
-
-      // zemin
-      if(this.y + this.h >= PLATFORM_Y){
-        this.y = PLATFORM_Y - this.h;
-        this.vy = 0;
-        this.onGround = true;
-      }
-
-      // kenarlar
-      this.x = clamp(this.x, 0, W - this.w);
-
-      // yön
-      if(inputDir !== 0) this.face = inputDir>0 ? 1 : -1;
-
-      // sayaçlar
-      if(this.inv>0) this.inv--;
-      if(this.jCD>0) this.jCD--;
-      if(this.kCD>0) this.kCD--;
     }
+    setTimeout(()=>c.kReady=true,2000);
+  }
+}
 
-    respawn(){
-      this.x = rnd(80, W-130);
-      this.y = PLATFORM_Y - this.h;
-      this.vx = 0; this.vy = 0;
-      this.inv = 60; // 1 sn
-    }
+// Karakter hareket ve efektler
+function update(){
+  for(let char in characters){
+    let c = characters[char];
+    if(keys['W']) c.y -=5;
+    if(keys['S']) c.y +=5;
+    if(keys['A']) c.x -=5;
+    if(keys['D']) c.x +=5;
+    if(keys['J']) attack(char,'J');
+    if(keys['K']) attack(char,'K');
 
-    // J saldırıları (hepsi knockback + hasar 1)
-    attackJ(){
-      if(this.jCD>0) return;
-      let hitbox, kb= (this.face===1? 9 : -9), dur=14, type="", extra=null;
-      if(this.name==="Murriko"){
-        type="sword";
-        hitbox = {x:this.x + (this.face===1? this.w: -36), y:this.y+10, w:36, h:16};
-      } else if(this.name==="Sanjai"){
-        type="spear";
-        hitbox = {x:this.x + (this.face===1? this.w: -56), y:this.y+14, w:56, h:12};
-      } else { // Purrio
-        type="nunchaku";
-        hitbox = {x:this.x + (this.face===1? this.w: -44), y:this.y+8, w:44, h:18};
-      }
-      effects.push(new Effect(type, hitbox, dur, this, {kb, dmg:1}));
-      this.jCD = 20;
-    }
-
-    // K süperleri (2 sn civarı)
-    attackK(){
-      if(this.kCD>0) return;
-      if(this.name==="Murriko"){
-        // Yukarı kılıç + sabit yılan başı (2 sn)
-        const up = {x:this.x+this.w/2-8, y:this.y-40, w:16, h:40};
-        effects.push(new Effect("swordUp", up, 20, this, {kb:0, dmg:1}));
-        const snake = {x:this.x + (this.face===1? this.w+8 : -36), y:PLATFORM_Y-60, w:28, h:60};
-        effects.push(new Effect("snake", snake, 120, this, {kb:(this.face===1? 7:-7), dmg:1}));
-      } else if(this.name==="Sanjai"){
-        // Dönüp kasırga (2 sn)
-        const tor = {x:this.x-26, y:this.y-6, w: this.w+52, h: this.h+12};
-        effects.push(new Effect("tornado", tor, 120, this, {kb:(this.face===1? 8:-8), dmg:1}));
-      } else {
-        // Çok hızlı saldıra + sağa yıldırım (2 sn)
-        const flurry = {x:this.x + (this.face===1? this.w: -54), y:this.y+4, w:54, h:24};
-        effects.push(new Effect("flurry", flurry, 30, this, {kb:(this.face===1? 6:-6), dmg:1}));
-        const boltX = clamp(this.x + this.w + 90, 30, W-30);
-        const bolt = {x:boltX-6, y:0, w:12, h:H};
-        effects.push(new Effect("lightning", bolt, 120, this, {kb:(this.face===1? 0:0), dmg:99})); // yıldırıma dokunan ölür gibi
-      }
-      this.kCD = 120;
+    // Ölünce 1 saniye sonra yeniden doğ
+    if(c.health<=0){
+      c.health=0;
+      setTimeout(()=>{ c.health=3; c.jCount=0; c.x=100+Math.random()*400; c.y=300; },1000);
     }
   }
 
-  class Effect {
-    constructor(kind, rect, life, owner, payload){
-      this.kind = kind;
-      this.rect = {...rect};
-      this.life = life;
-      this.owner = owner;
-      this.payload = payload || {kb:0, dmg:1};
-      this.t = 0;
+  // Efekt süresi
+  effects = effects.filter(e=> Date.now() - e.start < 2000 );
+
+  // Kazanan kontrol
+  let alive = Object.values(characters).filter(c=>c.health>0);
+  if(alive.length===1 && gameState==='playing'){
+    winner=alive[0];
+    gameState='gameOver';
+    document.getElementById('winner').textContent = Object.keys(characters).find(k=>characters[k]===winner);
+    document.getElementById('gameOver').style.display='flex';
+    setTimeout(()=>{
+      document.getElementById('gameOver').style.display='none';
+      document.getElementById('menu').style.display='flex';
+      gameState='menu';
+    },5000);
+  }
+}
+
+// Çizim ve animasyon
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Platform çizimi
+  ctx.fillStyle='#444';
+  ctx.fillRect(0,350,canvas.width,50);
+
+  for(let char in characters){
+    let c = characters[char];
+    ctx.fillStyle = c.color;
+    ctx.fillRect(c.x,c.y,c.width,c.height);
+
+    // Karakter pozları ve silah animasyonu
+    ctx.fillStyle='white';
+    ctx.font='14px sans-serif';
+    ctx.fillText(char,c.x,c.y-10);
+
+    if(char==='Murriko'){ // Kılıç X şeklinde
+      ctx.save();
+      ctx.translate(c.x+25,c.y+25);
+      ctx.rotate(Math.PI/4);
+      ctx.fillRect(-2.5,-25,5,50);
+      ctx.rotate(-Math.PI/2);
+      ctx.fillRect(-2.5,-25,5,50);
+      ctx.restore();
     }
-    update(){
-      this.t++;
-      this.life--;
-      // bazı efektlerde küçük anim hareketi:
-      if(this.kind==="tornado"){
-        // dairesel genişlik daralma-genişleme
-        const p = Math.sin(this.t*0.3)*3;
-        this.rect.x = this.owner.x - 26 + p;
-        this.rect.y = this.owner.y - 6;
-      } else if(this.kind==="flurry"){
-        // ileri geri titreşim
-        const dx = Math.sin(this.t*0.8)*4 * this.owner.face;
-        this.rect.x = (this.owner.x + (this.owner.face===1? this.owner.w: -54)) + dx;
-        this.rect.y = this.owner.y + 4 + Math.sin(this.t*1.2)*2;
-      } else if(this.kind==="sword"){
-        // kısa yay çizimi için hafif açı/sürükleme
-        this.rect.y = this.owner.y + 10 + Math.sin(this.t*0.5)*2;
-        this.rect.x = this.owner.x + (this.owner.face===1? this.owner.w: -this.rect.w);
-      } else if(this.kind==="swordUp"){
-        this.rect.x = this.owner.x + this.owner.w/2 - 8;
-        this.rect.y = this.owner.y - 40;
-      } else if(this.kind==="snake"){
-        // sabit
-      }
-      return this.life<=0;
+    if(char==='Sanjai'){ // Spear
+      ctx.save();
+      ctx.translate(c.x+25,c.y+25);
+      ctx.rotate(Math.sin(Date.now()/200)*0.5);
+      ctx.fillRect(-2.5,-30,5,60);
+      ctx.restore();
     }
-    draw(){
-      const r = this.rect;
-      if(this.kind==="sword"){
-        blade(r, "#ddd", "#fff");
-        arcSwing(this.owner, r);
-      } else if(this.kind==="swordUp"){
-        ctx.fillStyle="#ddd"; ctx.fillRect(r.x, r.y, r.w, r.h);
-        sparkle(r.x+r.w/2, r.y, 6);
-      } else if(this.kind==="spear"){
-        ctx.fillStyle="#ffd700"; ctx.fillRect(r.x, r.y, r.w, r.h);
-      } else if(this.kind==="nunchaku"){
-        ctx.fillStyle="#1f5bd6"; ctx.fillRect(r.x, r.y, r.w, r.h);
-        chainDots(r, this.owner.face);
-      } else if(this.kind==="snake"){
-        snakeHead(r);
-      } else if(this.kind==="tornado"){
-        tornado(r);
-      } else if(this.kind==="flurry"){
-        ctx.globalAlpha = 0.85;
-        ctx.fillStyle="#1f5bd6"; ctx.fillRect(r.x, r.y, r.w, r.h);
-        ctx.globalAlpha = 1;
-      } else if(this.kind==="lightning"){
-        lightning(r.x + r.w/2);
-      }
+    if(char==='Purrio'){ // Mınçık
+      ctx.save();
+      ctx.translate(c.x+25,c.y+25);
+      ctx.rotate(Math.sin(Date.now()/100)*0.5);
+      ctx.fillRect(-5,-5,10,10);
+      ctx.restore();
     }
   }
 
-  // --- Görsel yardımcı çizimler ---
-  function starfield(){
-    // basit yıldızlar
-    ctx.fillStyle="#000";
-    ctx.fillRect(0,0,W,H);
-    for(let i=0;i<70;i++){
-      const s = (i%3===0)?2:1;
-      ctx.fillStyle = i%5===0 ? "#9cf" : "#fff";
-      ctx.fillRect((i*57)%W, (i*97)%H, s, s);
-    }
-    // hafif nebula
-    const grad = ctx.createRadialGradient(W*0.75, H*0.3, 30, W*0.7, H*0.3, 260);
-    grad.addColorStop(0,"rgba(100,160,255,.18)");
-    grad.addColorStop(1,"rgba(0,0,0,0)");
-    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(W*0.72,H*0.3,260,0,Math.PI*2); ctx.fill();
-  }
-
-  function platform(){
-    // taş platform
-    ctx.fillStyle="#666";
-    ctx.fillRect(0, PLATFORM_Y, W, PLATFORM_H);
-    // taş dokusu
-    ctx.strokeStyle="#777"; ctx.lineWidth=2;
-    for(let x=0;x<W;x+=60){
-      ctx.beginPath();
-      ctx.moveTo(x+5, PLATFORM_Y+6);
-      ctx.lineTo(x+40, PLATFORM_Y+18);
-      ctx.stroke();
-    }
-  }
-
-  function blade(r, body="#ddd", edge="#fff"){
-    ctx.fillStyle = body; ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.fillStyle = edge; ctx.fillRect(r.x+r.w-4, r.y, 4, r.h);
-  }
-
-  function arcSwing(owner, r){
-    // kılıç savruluş izi
-    ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=6;
+  // Efektler
+  effects.forEach(e=>{
+    let c = characters[e.target];
+    ctx.fillStyle = e.type==='yilan' ? 'green' : e.type==='kasirga' ? 'cyan' : 'yellow';
     ctx.beginPath();
-    const cx = owner.x + (owner.face===1? owner.w+4 : owner.x-4);
-    const base = owner.y + 20;
-    const start = owner.face===1 ? Math.PI*1.8 : Math.PI*0.2;
-    const end   = owner.face===1 ? Math.PI*1.1 : Math.PI*0.9;
-    ctx.arc(cx, base, 34, start, end, owner.face!==1);
-    ctx.stroke();
-  }
-
-  function chainDots(r, face){
-    ctx.fillStyle="#9bb6ff";
-    for(let i=0;i<5;i++){
-      const px = r.x + (face===1? i*10 : r.w - i*10);
-      const py = r.y + 4 + Math.sin((i+performance.now()*0.01))*2;
-      ctx.fillRect(px, py, 3, 3);
-    }
-  }
-
-  function snakeHead(r){
-    // baş
-    ctx.fillStyle="#2cb34a";
-    ctx.fillRect(r.x, r.y, r.w, r.h);
-    // göz ve diş
-    ctx.fillStyle="#111"; ctx.fillRect(r.x+6, r.y+8, 6, 6);
-    ctx.fillRect(r.x+16, r.y+8, 6, 6);
-    ctx.fillStyle="#eee"; ctx.fillRect(r.x+6, r.y+r.h-10, 6, 8);
-    ctx.fillRect(r.x+16, r.y+r.h-10, 6, 8);
-  }
-
-  function tornado(r){
-    const cx = r.x + r.w/2, cy = r.y + r.h/2;
-    for(let i=0;i<6;i++){
-      const rad = 38 - i*5;
-      ctx.strokeStyle = `rgba(255,230,140,${0.25 + (i/12)})`;
-      ctx.lineWidth = 6 - i;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy + Math.sin((i+performance.now()*0.01))*3, rad, 10+i*2, 0, 0, Math.PI*2);
+    if(e.type==='yilan') ctx.fillRect(c.x+60,c.y-10,20,50);
+    if(e.type==='kasirga') ctx.arc(c.x+25,c.y+25,40,0,2*Math.PI);
+    if(e.type==='yildirim'){
+      ctx.moveTo(c.x+25,c.y-50);
+      ctx.lineTo(c.x+25,c.y);
+      ctx.lineWidth=5;
+      ctx.strokeStyle='yellow';
       ctx.stroke();
     }
-  }
-
-  function lightning(x){
-    // parlama
-    const g = ctx.createLinearGradient(0,0,0,H);
-    g.addColorStop(0,"rgba(255,255,255,.95)");
-    g.addColorStop(1,"rgba(255,255,255,.2)");
-    ctx.strokeStyle = g; ctx.lineWidth = 6;
-    ctx.beginPath();
-    let y=0, dx=0;
-    ctx.moveTo(x,0);
-    while(y<H){
-      dx += (Math.random()-0.5)*12;
-      ctx.lineTo(x+dx, y+=rnd(20,45));
-    }
-    ctx.stroke();
-    // yan kollar
-    ctx.lineWidth = 2;
-    for(let i=0;i<6;i++){
-      const y0 = rnd(0,H);
-      ctx.beginPath();
-      ctx.moveTo(x, y0);
-      ctx.lineTo(x + (Math.random()<0.5?-1:1)*rnd(15,40), y0 + rnd(8,30));
-      ctx.stroke();
-    }
-  }
-
-  function sparkle(x,y,r){
-    ctx.strokeStyle="rgba(255,255,255,.8)"; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(x-r,y); ctx.lineTo(x+r,y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x,y-r); ctx.lineTo(x,y+r); ctx.stroke();
-  }
-
-  // --- Çarpışma ve hasar ---
-  function applyHits(sourceEffect, targets){
-    const r = sourceEffect.rect;
-    targets.forEach(t=>{
-      if(t===sourceEffect.owner) return;
-      if(t.inv>0) return;
-      if(rectsOverlap(r, t.rect)){
-        t.hp -= Math.min(1, sourceEffect.payload.dmg);
-        t.vx = sourceEffect.payload.kb;
-        t.vy = -6;
-        if(t.hp<=0){
-          // can düşükse yeniden doğ
-          t.hp = 3;
-          t.respawn();
-        } else {
-          // küçük geri sekiş
-          t.x += (sourceEffect.payload.kb>0? 6: -6);
-        }
-      }
-    });
-  }
-
-  // --- AI (çok basit) ---
-  function botAI(bot, target){
-    bot.aiTimer--;
-    if(bot.aiTimer<=0){
-      bot.aiTimer = 20 + Math.floor(Math.random()*25);
-      // hedefe yaklaş
-      const dir = (target.x > bot.x) ? 1 : -1;
-      bot._dir = dir;
-      bot._crouch = false;
-      bot._jump = Math.random()<0.18 && bot.onGround;
-      // saldırı şansı
-      if(Math.abs(target.x - bot.x) < 86 && bot.jCD===0 && Math.random()<0.6){
-        bot.attackJ();
-      }
-      if(Math.abs(target.x - bot.x) < 70 && bot.kCD===0 && Math.random()<0.25){
-        bot.attackK();
-      }
-    }
-    bot.update(bot._dir||0, bot._jump||false, bot._crouch||false);
-    bot._jump = false;
-  }
-
-  // --- Çizimler: menü & seçim ---
-  function drawMenu(){
-    starfield();
-    // sarı play butonu
-    const bx = W/2 - 120, by = H/2 - 60, bw = 240, bh = 120;
-    ctx.fillStyle="#ffd400";
-    ctx.fillRect(bx,by,bw,bh);
-    ctx.fillStyle="#000"; ctx.font="bold 56px Arial";
-    ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText("PLAY", W/2, H/2);
-    // tıklama algıla
-    canvas.onclick = (e)=>{
-      const r = canvas.getBoundingClientRect();
-      const mx = e.clientX - r.left, my = e.clientY - r.top;
-      if(mx>bx && mx<bx+bw && my>by && my<by+bh){
-        state="select";
-        canvas.onclick = null;
-      }
-    };
-  }
-
-  function drawSelect(){
-    starfield(); platform();
-
-    // sağda 3 kare – (soldan sağa purrio, sanjai, murriko)
-    const cardW=68, cardH=68, baseX=W-110, baseY=120, gap=84;
-    ctx.textAlign="left"; ctx.textBaseline="alphabetic";
-    for(let i=0;i<3;i++){
-      const idx = i; // 0,1,2
-      const c = CHAR_LIST[idx];
-      const x = baseX, y = baseY + i*gap;
-      ctx.fillStyle = idx===selectedIndex? c.color : "#555";
-      ctx.fillRect(x,y,cardW,cardH);
-      ctx.strokeStyle = idx===selectedIndex? "#ffd400":"#888";
-      ctx.lineWidth=3; ctx.strokeRect(x-2,y-2,cardW+4,cardH+4);
-
-      // minik yazı
-      ctx.fillStyle="#fff"; ctx.font="14px Arial";
-      ctx.fillText(c.name, x, y + cardH + 16);
-
-      // click
-      canvas.onmousedown = (e)=>{
-        const r = canvas.getBoundingClientRect();
-        const mx = e.clientX - r.left, my = e.clientY - r.top;
-        for(let j=0;j<3;j++){
-          const xx=baseX, yy=baseY+j*gap;
-          if(mx>xx && mx<xx+cardW && my>yy && my<yy+cardH) { selectedIndex=j; }
-        }
-      };
-    }
-
-    // sol büyük önizleme
-    const p = CHAR_LIST[selectedIndex];
-    const pvX = 80, pvY = 180, pvW=220, pvH=220;
-    ctx.strokeStyle="#777"; ctx.lineWidth=3; ctx.strokeRect(pvX, pvY, pvW, pvH);
-    // preview turtle
-    ctx.fillStyle = p.color; ctx.fillRect(pvX+pvW/2-45, pvY+pvH/2-45, 90, 90);
-    ctx.strokeStyle = p.accent; ctx.strokeRect(pvX+pvW/2-39, pvY+pvH/2-39, 78, 78);
-
-    // talimat
-    ctx.fillStyle="#fff"; ctx.font="20px Arial";
-    ctx.fillText("Bir kaplumbağa seç ve C'ye bas!", 80, pvY-24);
-  }
-
-  // --- Oyun başlat ---
-  function startMatch(){
-    const sel = CHAR_LIST[selectedIndex];
-    player = new Fighter(W/2-30, sel.name, sel.color, sel.accent, false);
-    bots = [];
-    // diğer iki karakteri bot yap
-    for(let i=0;i<3;i++){
-      if(i===selectedIndex) continue;
-      const ch = CHAR_LIST[i];
-      const b = new Fighter( (i===0? 140 : W-200), ch.name, ch.color, ch.accent, true);
-      bots.push(b);
-    }
-    effects = [];
-  }
-
-  // --- Oyun ekranı ---
-  function drawPlay(){
-    starfield(); platform();
-
-    // input
-    const dir = (keys['a']?-1:0) + (keys['d']?1:0);
-    const jump = !!keys['w'];
-    const crouch = !!keys['s'];
-
-    // oyuncu aksiyon
-    player.update(dir, jump, crouch);
-
-    // ataklar
-    if(keys['j']){ player.attackJ(); keys['j']=false; }
-    if(keys['k']){ player.attackK(); keys['k']=false; }
-
-    // botlar
-    bots.forEach(b => botAI(b, player));
-
-    // efektler (güncelle/çiz)
-    for(let i=effects.length-1;i>=0;i--){
-      const ef = effects[i];
-      ef.update();
-      // çarpışma kontrolü
-      const targets = [player, ...bots];
-      applyHits(ef, targets);
-      ef.draw();
-      if(ef.life<=0) effects.splice(i,1);
-    }
-
-    // hepsini çiz
-    player.draw();
-    bots.forEach(b=>b.draw());
-
-    // HUD
-    ctx.fillStyle="#fff"; ctx.font="16px Arial"; ctx.textAlign="left";
-    ctx.fillText(`${player.name}: ${player.hp} can`, 12, 20);
-    bots.forEach((b,i)=>ctx.fillText(`${b.name}: ${b.hp} can`, 12, 40+20*i));
-
-    // bitiş kontrolü (botların ikisi de 0'a düşüp respawn olup tekrar 3'e çekiliyor;
-    // kazanma kriteri: 20 isabet atınca (örnek). Daha net olması için "skor" kullanalım.)
-  }
-
-  // Basit skor yerine "rakipleri 6 kez düşür" mantığı:
-  let playerScore = 0;
-  let botScores = new Map();
-
-  // applyHits içinde respawn yapıyoruz; skoru artır:
-  const _origApplyHits = applyHits;
-  applyHits = function(sourceEffect, targets){
-    const beforeHP = new Map(targets.map(t=>[t, t.hp]));
-    _origApplyHits(sourceEffect, targets);
-    targets.forEach(t=>{
-      // respawn olduğu anı yakala: hp önce 1 iken isabet alıp tekrar 3 olmuşsa
-      if(beforeHP.get(t)>0 && beforeHP.get(t)!==t.hp && t.hp===3 && t.inv>0){
-        // t düştü demektir
-        if(sourceEffect.owner === player) playerScore++;
-        else {
-          botScores.set(sourceEffect.owner, (botScores.get(sourceEffect.owner)||0)+1);
-        }
-      }
-    });
-  };
-
-  function drawScore(){
-    ctx.textAlign="right";
-    ctx.fillText(`Skor: ${playerScore}`, W-12, 20);
-  }
-
-  function checkWin(){
-    // oyuncu 6 düşürmeye ulaşırsa kazansın
-    if(playerScore>=6){
-      winnerName = player.name;
-      winTimer = 5*60;
-      state="win";
-    }
-  }
-
-  // --- WIN ekranı ---
-  function drawWin(){
-    starfield(); platform();
-    ctx.fillStyle="#fff"; ctx.font="bold 64px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText(`${winnerName} KAZANDI!`, W/2, H/2);
-    winTimer--;
-    if(winTimer<=0){
-      // ana menüye dön
-      state="menu";
-      selectedIndex=2;
-      playerScore=0; botScores.clear();
-    }
-  }
-
-  // --- Giriş ---
-  window.addEventListener('keydown', (e)=>{
-    keys[e.key.toLowerCase()] = true;
-    if(state==="select" && e.key.toLowerCase()==='c'){
-      startMatch();
-      state = "play";
-    }
-    // seçim ekranında ok tuşları ile de ilerleme
-    if(state==="select"){
-      if(e.key==="ArrowUp") selectedIndex = clamp(selectedIndex-1, 0, 2);
-      if(e.key==="ArrowDown") selectedIndex = clamp(selectedIndex+1, 0, 2);
-    }
+    ctx.fill();
   });
-  window.addEventListener('keyup', (e)=>{ keys[e.key.toLowerCase()] = false; });
+}
 
-  // Döngü
-  function loop(){
-    if(state==="menu")       drawMenu();
-    else if(state==="select") { drawSelect(); }
-    else if(state==="play")  { drawPlay(); drawScore(); checkWin(); }
-    else if(state==="win")   { drawWin(); }
-    requestAnimationFrame(loop);
+function gameLoop(){
+  if(gameState==='playing'){
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
   }
-  loop();
-
-})();
+}
 </script>
+
 </body>
 </html>
